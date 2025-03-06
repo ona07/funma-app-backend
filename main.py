@@ -18,7 +18,7 @@ app.add_middleware(
 def hello():
     return {"message": "hello world!"}
 
-@app.post("/predict")
+@app.get("/predict")
 async def predict():
     """8時間分の15分ごとの合計客数を返す（日本時間対応, 0, 15, 30, 45分固定）"""
     now_utc = datetime.utcnow() + timedelta(hours=9)  # 日本時間（JST）に変換
