@@ -33,7 +33,7 @@ async def predict():
     predictions = []
 
     # **未来の混雑率を予測**
-    future_steps = 32  # 8時間分（15分ごとに32データ）
+    future_steps = 16  # 8時間分（15分ごとに32データ）
     future_predictions = arima_model.forecast(steps=future_steps)  # ARIMAによる予測
 
     for i in range(future_steps):
