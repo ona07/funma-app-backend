@@ -1,25 +1,26 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
 import pickle
+import pandas as pd
 
 app = FastAPI()
 
-# CORSミドルウェアを追加
+# CORSミドルウェア設定（開発用：すべて許可）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # すべてのオリジンを許可（本番では制限する）
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # すべてのHTTPメソッドを許可
-    allow_headers=["*"],  # すべてのHTTPヘッダーを許可
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# ARIMAモデルのパス
-ARIMA_MODEL_PATH = "arima_model.pkl"
+# Prophetモデルのパス
+PROPHET_MODEL_PATH = "prophet_model.pkl"
 
-# **ARIMAモデルをロード**
-with open(ARIMA_MODEL_PATH, "rb") as f:
-    arima_model = pickle.load(f)
+# Prophetモデルの読み込み
+with open(PROPHET_MODEL_PATH, "rb") as f:
+    prophet_model = pickle.load(f)
 
 @app.get("/hello")
 async def hello():
@@ -27,20 +28,59 @@ async def hello():
 
 @app.get("/predict")
 async def predict():
-    """8時間分の15分ごとの合計客数を返す（日本時間対応, 0, 15, 30, 45分固定）"""
-    now_utc = datetime.utcnow() + timedelta(hours=9)  # 日本時間（JST）に変換
-    now_jst = now_utc.replace(minute=0, second=0, microsecond=0)  # 「00分」にリセット
+    """
+    現在時刻（JST）から8時間分の混雑予測を返す（15分おき、32ステップ）
+    """
+    # 現在時刻（JST）を0分に丸める
+    now_utc = datetime.utcnow() + timedelta(hours=9)
+    start_jst = now_utc.replace(minute=0, second=0, microsecond=0)
+
+    # 15分おきの未来の時刻を32ステップ分生成
+    future = pd.date_range(start=start_jst, periods=16, freq="15min")
+    future_df = pd.DataFrame({"ds": future})
+
+    # 予測を実行
+    forecast = prophet_model.predict(future_df)
+
+    # 結果を整形
     predictions = []
+    for _, row in forecast.iterrows():
+        predictions.append({
+            "time": row["ds"].strftime("%Y-%m-%d %H:%M"),
+            "count": round(max(0, row["yhat"]), 2)
+        })
 
-    # **未来の混雑率を予測**
-    future_steps = 16  # 8時間分（15分ごとに32データ）
-    future_predictions = arima_model.forecast(steps=future_steps)  # ARIMAによる予測
+    return {"predictions": predictions}
 
-    for i in range(future_steps):
-        time_jst = now_jst + timedelta(minutes=15 * i)
-        formatted_time = time_jst.strftime("%Y-%m-%d %H:%M")
-        predicted_count = max(0, future_predictions[i])  # 負の値を防ぐため max(0, x)
+@app.get("/predict2")
+async def predict2(start_time: str = Query(None, description="形式: YYYY-MM-DD HH:MM")):
+    """
+    指定時刻（JST）または現在時刻から8時間分の混雑予測を返す（15分おき、32ステップ）
+    """
+    try:
+        if start_time:
+            # 指定された時刻文字列をJSTとして解釈
+            start_jst = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
+        else:
+            # 現在のJST時刻を0分に丸めて使用
+            now_utc = datetime.utcnow() + timedelta(hours=9)
+            start_jst = now_utc.replace(minute=0, second=0, microsecond=0)
+    except ValueError:
+        return {"error": "Invalid datetime format. Use YYYY-MM-DD HH:MM"}
 
-        predictions.append({"time": formatted_time, "count": round(predicted_count, 2)})
+    # 未来の時刻を生成
+    future = pd.date_range(start=start_jst, periods=16, freq="15min")
+    future_df = pd.DataFrame({"ds": future})
+
+    # 予測を実行
+    forecast = prophet_model.predict(future_df)
+
+    # 結果を整形
+    predictions = []
+    for _, row in forecast.iterrows():
+        predictions.append({
+            "time": row["ds"].strftime("%Y-%m-%d %H:%M"),
+            "count": round(max(0, row["yhat"]), 2)
+        })
 
     return {"predictions": predictions}
